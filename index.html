@@ -143,7 +143,7 @@
     }
 
     #treeModeMenu {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
     }
 
     .segment {
@@ -415,6 +415,36 @@
       transition: none;
     }
 
+    body.b234-mode .b-node-group {
+      position: absolute;
+      width: 174px;
+      height: 68px;
+      transform: translate(-50%, -50%);
+      border: 2px solid #8ca99a;
+      border-radius: 10px;
+      background: #eef6ee;
+    }
+
+    body.b234-mode .slot {
+      width: 54px;
+      height: 58px;
+      border-radius: 7px;
+      border-width: 2px;
+      z-index: 1;
+    }
+
+    body.b234-mode .slot::after { content: none; }
+
+    body.b234-mode .board .node {
+      width: 52px;
+      height: 56px;
+      border-radius: 7px;
+      font-size: 20px;
+      z-index: 3;
+    }
+
+    body.b234-mode #addSlotBtn { display: none; }
+
     .order-badge {
       position: absolute;
       left: -4px;
@@ -564,6 +594,7 @@
           <button class="segment active" data-tree-mode="bst">BST</button>
           <button class="segment" data-tree-mode="avl">AVL</button>
           <button class="segment" data-tree-mode="rb">Red-Black</button>
+          <button class="segment" data-tree-mode="b234">2-3-4</button>
         </div>
       </section>
 
@@ -602,6 +633,7 @@
         <div class="tip"><span class="dot">2</span><span>The badge numbers show insertion order, but correctness is checked at the end.</span></div>
         <div class="tip"><span class="dot">3</span><span>For removal tasks, drag the highlighted node back into the number bay.</span></div>
         <div class="tip"><span class="dot">4</span><span>In Red-Black mode, click or tap a placed node to switch it between red and black.</span></div>
+        <div class="tip"><span class="dot">5</span><span>In 2-3-4 mode, place up to three sorted keys in each box. All leaves must line up at the same depth.</span></div>
       </section>
     </aside>
 
@@ -637,7 +669,8 @@
     const challengeCache = {
       bst: { build: [], alter: [] },
       avl: { build: [], alter: [] },
-      rb: { build: [], alter: [] }
+      rb: { build: [], alter: [] },
+      b234: { build: [], alter: [] }
     };
 
     const positions = [
@@ -685,6 +718,7 @@
     let taskMode = "build";
     let difficulty = "easy";
     let slotMap = new Map();
+    let bNodeMap = new Map();
     let tileMap = new Map();
     let dragging = null;
     let toastTimer = null;
@@ -713,8 +747,16 @@
 
     function generateBuildChallenge(kind, index) {
       const [minCount, maxCount] = difficultyRanges[difficulty].build;
-      const count = randomCount(minCount, kind === "avl" || kind === "rb" ? Math.min(maxCount, 11) : maxCount);
+      const count = randomCount(minCount, kind === "avl" || kind === "rb" || kind === "b234" ? Math.min(maxCount, 11) : maxCount);
       const values = randomValues(count);
+      if (kind === "b234") {
+        return {
+          values,
+          order: values,
+          lesson: "<strong>2-3-4 rule:</strong> each node has 1–3 sorted keys and, unless it is a leaf, one more child than keys. Every leaf is at the same depth. Split full nodes before descending during insertion.",
+          prompt: `Infinite 2-3-4 build challenge ${index + 1}: insert these ${count} values in badge order, splitting full nodes on the way down. Arrange the final keys in the boxes.`
+        };
+      }
       if (kind === "rb") {
         return {
           values,
@@ -741,9 +783,24 @@
 
     function generateAlterChallenge(kind, index) {
       if (kind === "rb") return generateRbAlterChallenge(index);
+      if (kind === "b234") return generate234AlterChallenge(index);
       const removeChallenge = index % 2 === 1;
       if (kind === "avl") return generateAvlAlterChallenge(index, removeChallenge);
       return generateBstAlterChallenge(index, removeChallenge);
+    }
+
+    function generate234AlterChallenge(index) {
+      const [minCount, maxCount] = difficultyRanges[difficulty].alter;
+      const premade = randomValues(randomCount(minCount, Math.min(maxCount, 8)));
+      const addValue = uniqueRandomValue(premade);
+      return {
+        values: [...premade, addValue],
+        premade,
+        add: [addValue],
+        order: [...premade, addValue],
+        lesson: "<strong>2-3-4 insertion:</strong> split a full 4-node before descending through it. Promote its middle key, then insert into a non-full leaf.",
+        prompt: `Infinite 2-3-4 alter challenge ${index + 1}: add ${addValue} to the starting tree, splitting full nodes as needed.`
+      };
     }
 
     function generateRbAlterChallenge(index) {
@@ -1094,16 +1151,112 @@
       return Math.max(modelDepth(node.left), modelDepth(node.right)) + 1;
     }
 
+    function build234Model(values) {
+      if (!values.length) return null;
+      let root = { keys: [], children: [] };
+      const splitChild = (parent, index) => {
+        const full = parent.children[index];
+        const middle = full.keys[1];
+        const right = { keys: [full.keys[2]], children: full.children.slice(2) };
+        full.keys = [full.keys[0]];
+        full.children = full.children.slice(0, 2);
+        parent.keys.splice(index, 0, middle);
+        parent.children.splice(index + 1, 0, right);
+      };
+      values.forEach((value) => {
+        if (root.keys.length === 3) {
+          root = { keys: [], children: [root] };
+          splitChild(root, 0);
+        }
+        let node = root;
+        while (node.children.length) {
+          let index = node.keys.findIndex((key) => value < key);
+          if (index < 0) index = node.keys.length;
+          if (node.children[index].keys.length === 3) {
+            splitChild(node, index);
+            if (value > node.keys[index]) index += 1;
+          }
+          node = node.children[index];
+        }
+        node.keys.push(value);
+        node.keys.sort((a, b) => a - b);
+      });
+      return root;
+    }
+
+    function collect234Nodes(node, path, paths) {
+      if (!node) return;
+      paths.add(path);
+      node.children.forEach((child, index) => collect234Nodes(child, `${path}/${index}`, paths));
+    }
+
+    function init234Board(level) {
+      const expected = build234Model(level.order);
+      const premade = level.premade ? build234Model(level.premade) : null;
+      const paths = new Set();
+      collect234Nodes(expected, "root", paths);
+      collect234Nodes(premade, "root", paths);
+      const children = (path) => [...paths].filter((candidate) => candidate.startsWith(`${path}/`) && candidate.split("/").length === path.split("/").length + 1).sort();
+      let leaf = 0;
+      const coordinates = new Map();
+      const layout = (path, depth) => {
+        const childPaths = children(path);
+        const childXs = childPaths.map((child) => layout(child, depth + 1));
+        const x = childXs.length ? (childXs[0] + childXs[childXs.length - 1]) / 2 : 130 + leaf++ * 196;
+        coordinates.set(path, { x, y: 86 + depth * 170, parent: path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : null });
+        return x;
+      };
+      layout("root", 0);
+      const maxX = Math.max(...[...coordinates.values()].map((point) => point.x));
+      const maxY = Math.max(...[...coordinates.values()].map((point) => point.y));
+      const width = Math.max(1000, maxX + 130);
+      const height = Math.max(620, maxY + 120);
+      board.style.width = `${width}px`;
+      board.style.height = `${height}px`;
+      links.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      coordinates.forEach((point, path) => {
+        const group = document.createElement("div");
+        group.className = "b-node-group";
+        group.style.left = `${point.x}px`;
+        group.style.top = `${point.y}px`;
+        board.appendChild(group);
+        bNodeMap.set(path, { ...point, path });
+        for (let index = 0; index < 3; index += 1) {
+          const id = `${path}:${index}`;
+          const slot = document.createElement("div");
+          slot.className = "slot";
+          slot.dataset.id = id;
+          slot.textContent = "+";
+          const x = point.x + (index - 1) * 56;
+          slot.style.left = `${x}px`;
+          slot.style.top = `${point.y}px`;
+          board.appendChild(slot);
+          slotMap.set(id, { id, x, y: point.y, value: null, el: slot });
+        }
+      });
+      if (premade) placePremade234Model(premade, "root");
+    }
+
+    function placePremade234Model(node, path) {
+      node.keys.forEach((value, index) => moveTileToSlot(tileMap.get(String(value)), `${path}:${index}`));
+      node.children.forEach((child, index) => placePremade234Model(child, `${path}/${index}`));
+    }
+
     function sample(values) {
       return values[Math.floor(Math.random() * values.length)];
     }
 
     function initLevel() {
       const level = currentTask();
-      board.querySelectorAll(".slot,.node").forEach((el) => el.remove());
+      document.body.classList.toggle("b234-mode", treeMode === "b234");
+      board.querySelectorAll(".slot,.node,.b-node-group").forEach((el) => el.remove());
+      board.style.width = "1000px";
+      board.style.height = "620px";
+      links.setAttribute("viewBox", "0 0 1000 620");
       pool.innerHTML = "";
       links.innerHTML = "";
       slotMap = new Map();
+      bNodeMap = new Map();
       tileMap = new Map();
       dragging = null;
       hintStage = 0;
@@ -1114,15 +1267,17 @@
       initializing = true;
 
       lessonText.innerHTML = level.lesson;
-      promptTitle.textContent = `${treeMode.toUpperCase()} ${taskMode === "build" ? "Build" : "Premade Alter"}`;
+      promptTitle.textContent = `${treeMode === "b234" ? "2-3-4" : treeMode.toUpperCase()} ${taskMode === "build" ? "Build" : "Premade Alter"}`;
       promptText.textContent = level.prompt;
       levelPill.textContent = `Challenge ${levelIndex + 1}`;
       statusText.textContent = "Ready";
       orderText.textContent = "-";
 
-      positions.forEach((pos) => createSlot(pos));
+      if (treeMode !== "b234") positions.forEach((pos) => createSlot(pos));
       level.values.forEach((value, index) => createTile(value, index));
-      if (level.premade) {
+      if (treeMode === "b234") {
+        init234Board(level);
+      } else if (level.premade) {
         if (treeMode === "rb") {
           placePremadeRbModel(buildRbModel(level.premade), "root");
         } else {
@@ -1533,6 +1688,21 @@
 
     function drawLinks() {
       links.innerHTML = "";
+      if (treeMode === "b234") {
+        bNodeMap.forEach((child) => {
+          if (!child.parent) return;
+          const parent = bNodeMap.get(child.parent);
+          if (!parent) return;
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("class", "link");
+          line.setAttribute("x1", parent.x);
+          line.setAttribute("y1", parent.y + 36);
+          line.setAttribute("x2", child.x);
+          line.setAttribute("y2", child.y - 36);
+          links.appendChild(line);
+        });
+        return;
+      }
       slotMap.forEach((child) => {
         if (!child.parent) return;
         const parent = slotMap.get(child.parent);
@@ -1556,6 +1726,10 @@
     }
 
     function checkTree() {
+      if (treeMode === "b234") {
+        check234Tree();
+        return;
+      }
       const total = expectedValues().length;
       const placed = [...tileMap.values()].filter((tile) => tile.slotId).length;
       const order = inOrder("root");
@@ -1621,6 +1795,86 @@
       return task.values.filter((value) => !(task.remove || []).includes(value));
     }
 
+    function collect234Targets(node, path, targets) {
+      if (!node) return;
+      node.keys.forEach((value, index) => targets.push({ value, slotId: `${path}:${index}` }));
+      node.children.forEach((child, index) => collect234Targets(child, `${path}/${index}`, targets));
+    }
+
+    function node234Keys(path) {
+      return [0, 1, 2].map((index) => slotMap.get(`${path}:${index}`)?.value ?? null);
+    }
+
+    function inOrder234(path) {
+      if (!bNodeMap.has(path)) return [];
+      const keys = node234Keys(path).filter((value) => value !== null);
+      const result = [];
+      keys.forEach((key, index) => {
+        result.push(...inOrder234(`${path}/${index}`));
+        result.push(key);
+      });
+      result.push(...inOrder234(`${path}/${keys.length}`));
+      return result;
+    }
+
+    function report234(path, low = -Infinity, high = Infinity, depth = 0) {
+      const cells = node234Keys(path);
+      const keys = cells.filter((value) => value !== null);
+      if (!keys.length || cells.slice(0, keys.length).some((value) => value === null)) {
+        return { ok: false, message: "Each used box needs 1–3 keys packed from left to right." };
+      }
+      if (keys.some((value, index) => value <= (index ? keys[index - 1] : low) || value >= high)) {
+        return { ok: false, message: "Keys in each box must increase, and every child must stay within its parent’s key range." };
+      }
+      const childPaths = [0, 1, 2, 3].map((index) => `${path}/${index}`);
+      const usedChildren = childPaths.filter((child) => bNodeMap.has(child) && node234Keys(child).some((value) => value !== null));
+      if (!usedChildren.length) return { ok: true, leafDepth: depth };
+      if (usedChildren.length !== keys.length + 1 || usedChildren.some((child, index) => child !== childPaths[index])) {
+        return { ok: false, message: "A box with children needs exactly one more child than keys, with no gaps." };
+      }
+      let leafDepth = null;
+      for (let index = 0; index < usedChildren.length; index += 1) {
+        const child = report234(usedChildren[index], index ? keys[index - 1] : low, index < keys.length ? keys[index] : high, depth + 1);
+        if (!child.ok) return child;
+        if (leafDepth !== null && child.leafDepth !== leafDepth) {
+          return { ok: false, message: "All leaves in a 2-3-4 tree must be at the same depth." };
+        }
+        leafDepth = child.leafDepth;
+      }
+      return { ok: true, leafDepth };
+    }
+
+    function check234Tree() {
+      const total = expectedValues().length;
+      const placed = [...tileMap.values()].filter((tile) => tile.slotId).length;
+      const order = inOrder234("root");
+      orderText.textContent = order.length ? order.join("  ") : "-";
+      if (placed < total) {
+        statusText.textContent = `${total - placed} left`;
+        showToast("Place every key in a 2-3-4 node.");
+        return;
+      }
+      const report = report234("root");
+      if (!report.ok) {
+        statusText.textContent = "Rule violation";
+        showToast(report.message);
+        return;
+      }
+      const targets = [];
+      collect234Targets(build234Model(currentTask().order), "root", targets);
+      const expected = new Map(targets.map((target) => [target.slotId, target.value]));
+      if ([...slotMap.values()].some((slot) => slot.value !== (expected.get(slot.id) ?? null))) {
+        statusText.textContent = "Wrong grouping";
+        showToast("The keys follow 2-3-4 rules, but the final boxes do not match top-down insertion in badge order.");
+        return;
+      }
+      statusText.textContent = "2-3-4 complete";
+      solved = true;
+      checkBtn.hidden = true;
+      continueBtn.hidden = false;
+      showToast("Correct. Study this tree, then press Continue.");
+    }
+
     function expectedTreeModel() {
       const task = currentTask();
       if (!task.order) return null;
@@ -1666,6 +1920,10 @@
       if (task.remove && !removedTargetsSatisfied()) {
         return `First remove ${task.remove.join(", ")} by dragging it back to the number bay.`;
       }
+      if (treeMode === "b234") {
+        const model = build234Model(task.order);
+        return `Root clue: the root contains ${model.keys.join(", ")}. Each box holds 1–3 sorted keys; its child boxes cover the ranges between those keys.`;
+      }
       const expected = expectedTreeModel();
       if (!expected) return "Use the BST rule first, then for AVL make every balance factor -1, 0, or 1.";
       if (treeMode === "rb") {
@@ -1678,6 +1936,21 @@
     }
 
     function autoPlaceHints() {
+      if (treeMode === "b234") {
+        const targets = [];
+        collect234Targets(build234Model(currentTask().order), "root", targets);
+        let placed = 0;
+        for (const target of targets) {
+          if (placed >= 3) break;
+          const slot = slotMap.get(target.slotId);
+          const record = tileMap.get(String(target.value));
+          if (slot && slot.value === null && record && !record.slotId) {
+            placeInSlot(record.el, target.slotId);
+            placed += 1;
+          }
+        }
+        return placed;
+      }
       const expected = expectedTreeModel();
       if (!expected) return 0;
       const targets = [];
@@ -1797,7 +2070,7 @@
         button.classList.toggle("active", button.dataset.taskMode === taskMode);
       });
       initLevel();
-      showToast(`Switched to ${treeMode.toUpperCase()} ${taskMode}.`);
+      showToast(`Switched to ${treeMode === "b234" ? "2-3-4" : treeMode.toUpperCase()} ${taskMode}.`);
     }
 
     function setDifficulty(nextDifficulty) {
@@ -1809,6 +2082,8 @@
       challengeCache.avl.alter = [];
       challengeCache.rb.build = [];
       challengeCache.rb.alter = [];
+      challengeCache.b234.build = [];
+      challengeCache.b234.alter = [];
       document.querySelectorAll("[data-difficulty]").forEach((button) => {
         button.classList.toggle("active", button.dataset.difficulty === difficulty);
       });
