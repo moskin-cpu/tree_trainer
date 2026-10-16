@@ -2272,8 +2272,9 @@
         const dx = child.x - parent.x;
         const dy = child.y - parent.y;
         const length = Math.hypot(dx, dy);
+        const middleBranchOffset = is234 && dx === 0 ? 24 : 0;
         svg.appendChild(svgElement("line", {
-          x1: parent.x + shift + (is234 ? 0 : 26 * dx / length),
+          x1: parent.x + shift + middleBranchOffset + (is234 ? 0 : 26 * dx / length),
           y1: parent.y + (is234 ? 26 : 26 * dy / length),
           x2: child.x + shift - (is234 ? 0 : 26 * dx / length),
           y2: child.y - (is234 ? 26 : 26 * dy / length),
