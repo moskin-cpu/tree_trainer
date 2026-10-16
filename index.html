@@ -1194,8 +1194,12 @@
       return node ? node.height : 0;
     }
 
-    function buildRbModel(values) {
+    function buildRbModel(values, onStep = null) {
       let root = null;
+      let activeValue = null;
+      const emit = (title, text, focus = activeValue, violation = false) => {
+        if (onStep) onStep({ value: activeValue, title, text, model: copySolutionModel(root, "rb"), focus, violation });
+      };
 
       function rotateLeft(node) {
         const pivot = node.right;
@@ -1225,21 +1229,28 @@
         while (node.parent && node.parent.color === "red") {
           const parent = node.parent;
           const grandparent = parent.parent;
+          emit("Red-red violation", `${node.value} and its parent ${parent.value} are both red. A red node cannot have a red child.`, parent.value, true);
           if (parent === grandparent.left) {
             const uncle = grandparent.right;
             if (uncle && uncle.color === "red") {
               parent.color = "black";
               uncle.color = "black";
               grandparent.color = "red";
+              emit("Recolor parent and uncle", `Parent ${parent.value} and uncle ${uncle.value} turn black; grandparent ${grandparent.value} turns red. Check upward for another red-red conflict.`, grandparent.value);
               node = grandparent;
             } else {
               if (node === parent.right) {
                 node = parent;
+                const pivotValue = node.value;
                 rotateLeft(node);
+                emit(`Rotate left at ${pivotValue}`, `The red chain bends left-right. Rotate left at ${pivotValue} to make it a straight left-left case.`, pivotValue);
               }
+              const oldGrandparent = node.parent.parent;
               node.parent.color = "black";
               node.parent.parent.color = "red";
-              rotateRight(node.parent.parent);
+              emit("Recolor before rotation", `Make ${node.parent.value} black and ${oldGrandparent.value} red so the coming rotation preserves black height.`, oldGrandparent.value);
+              rotateRight(oldGrandparent);
+              emit(`Rotate right at ${oldGrandparent.value}`, `Rotate right at ${oldGrandparent.value} to remove the red-red conflict.`, oldGrandparent.value);
             }
           } else {
             const uncle = grandparent.left;
@@ -1247,22 +1258,32 @@
               parent.color = "black";
               uncle.color = "black";
               grandparent.color = "red";
+              emit("Recolor parent and uncle", `Parent ${parent.value} and uncle ${uncle.value} turn black; grandparent ${grandparent.value} turns red. Check upward for another red-red conflict.`, grandparent.value);
               node = grandparent;
             } else {
               if (node === parent.left) {
                 node = parent;
+                const pivotValue = node.value;
                 rotateRight(node);
+                emit(`Rotate right at ${pivotValue}`, `The red chain bends right-left. Rotate right at ${pivotValue} to make it a straight right-right case.`, pivotValue);
               }
+              const oldGrandparent = node.parent.parent;
               node.parent.color = "black";
               node.parent.parent.color = "red";
-              rotateLeft(node.parent.parent);
+              emit("Recolor before rotation", `Make ${node.parent.value} black and ${oldGrandparent.value} red so the coming rotation preserves black height.`, oldGrandparent.value);
+              rotateLeft(oldGrandparent);
+              emit(`Rotate left at ${oldGrandparent.value}`, `Rotate left at ${oldGrandparent.value} to remove the red-red conflict.`, oldGrandparent.value);
             }
           }
         }
-        root.color = "black";
+        if (root.color !== "black") {
+          root.color = "black";
+          emit("Make the root black", `The root ${root.value} must be black; this also restores equal black height at the top.`, root.value);
+        }
       }
 
       values.forEach((value) => {
+        activeValue = value;
         const node = { value, color: "red", left: null, right: null, parent: null };
         let parent = null;
         let current = root;
@@ -1274,6 +1295,8 @@
         if (!parent) root = node;
         else if (value < parent.value) parent.left = node;
         else parent.right = node;
+        const relation = parent ? `${value} is now the ${value < parent.value ? "left" : "right"} child of ${parent.value}.` : `${value} is the root.`;
+        emit(`Insert ${value} as red`, `${relation} ${!parent ? "The root-black rule is now broken." : parent.color === "red" ? "Its red parent breaks the no red-red rule." : "Its parent is black, so no red-red rule is broken."}`, value, !parent || parent.color === "red");
         repair(node);
       });
       return root;
@@ -1284,22 +1307,31 @@
       return Math.max(modelDepth(node.left), modelDepth(node.right)) + 1;
     }
 
-    function build234Model(values) {
+    function build234Model(values, onStep = null) {
       if (!values.length) return null;
       let root = { keys: [], children: [] };
-      const splitChild = (parent, index) => {
+      let activeValue = null;
+      const emit = (title, text, focus = activeValue, violation = false) => {
+        if (onStep) onStep({ value: activeValue, title, text, model: copySolutionModel(root, "b234"), focus, violation });
+      };
+      const splitChild = (parent, index, beforeShown = false) => {
         const full = parent.children[index];
+        const oldKeys = [...full.keys];
+        if (!beforeShown) emit("Full 4-node before descent", `Node [${oldKeys.join(", ")}] already has the maximum three keys. Split it before descending toward ${activeValue}; a fourth key would violate the 2-3-4 node limit.`, oldKeys[1], true);
         const middle = full.keys[1];
         const right = { keys: [full.keys[2]], children: full.children.slice(2) };
         full.keys = [full.keys[0]];
         full.children = full.children.slice(0, 2);
         parent.keys.splice(index, 0, middle);
         parent.children.splice(index + 1, 0, right);
+        emit(`Split and promote ${middle}`, `Split [${oldKeys.join(", ")}] into [${oldKeys[0]}] and [${oldKeys[2]}], and promote ${middle} to the parent.`, middle);
       };
       values.forEach((value) => {
+        activeValue = value;
         if (root.keys.length === 3) {
+          emit("Full root before insertion", `The root [${root.keys.join(", ")}] already has the maximum three keys. Split it before inserting ${value}; a fourth key would violate the 2-3-4 node limit.`, root.keys[1], true);
           root = { keys: [], children: [root] };
-          splitChild(root, 0);
+          splitChild(root, 0, true);
         }
         let node = root;
         while (node.children.length) {
@@ -1313,6 +1345,7 @@
         }
         node.keys.push(value);
         node.keys.sort((a, b) => a - b);
+        emit(`Insert ${value} into a leaf`, `Place ${value} in sorted order in this leaf. It has ${node.keys.length} key${node.keys.length === 1 ? "" : "s"}, within the 1–3 key limit.`, value);
       });
       return root;
     }
@@ -2030,56 +2063,156 @@
       return buildTreeModel(values);
     }
 
-    function insertionExplanation(value, task) {
-      if (treeMode === "avl") {
-        const rotation = taskMode === "alter" && task.rotation ? ` This is the ${task.rotation} case.` : "";
-        return `Insert ${value} by BST order, then rotate wherever a node becomes unbalanced.${rotation}`;
+    function copySolutionModel(node, kind = treeMode) {
+      if (!node) return null;
+      if (kind === "b234") return { keys: [...node.keys], children: node.children.map((child) => copySolutionModel(child, kind)) };
+      const copy = { value: node.value, left: copySolutionModel(node.left, kind), right: copySolutionModel(node.right, kind) };
+      if (kind === "avl") copy.height = node.height;
+      if (kind === "rb") copy.color = node.color;
+      return copy;
+    }
+
+    function insertionRoute(root, value) {
+      const comparisons = [];
+      let node = root;
+      while (node) {
+        const side = value < node.value ? "left" : "right";
+        comparisons.push(`${value} ${value < node.value ? "<" : ">"} ${node.value}, so go ${side}.`);
+        node = node[side];
       }
-      if (treeMode === "rb") return `Insert ${value} as red, then repair red-red conflicts with recoloring or rotations. The root ends black.`;
-      if (treeMode === "b234") return `Before descending, split any full 4-node and promote its middle key. Insert ${value} into the sorted leaf.`;
-      return `Compare ${value} from the root: go left for smaller values and right for larger values until an empty spot is found.`;
+      return comparisons.length ? comparisons.join(" ") : "The tree is empty, so this value becomes the root.";
+    }
+
+    function refreshAvlHeights(node) {
+      if (!node) return 0;
+      node.height = Math.max(refreshAvlHeights(node.left), refreshAvlHeights(node.right)) + 1;
+      return node.height;
+    }
+
+    function deepestAvlViolation(root) {
+      let result = null;
+      function visit(node, path) {
+        if (!node) return;
+        visit(node.left, `${path}L`);
+        visit(node.right, `${path}R`);
+        const balance = modelBalance(node);
+        if (Math.abs(balance) > 1 && (!result || path.length > result.path.length)) result = { node, path, balance };
+      }
+      visit(root, "");
+      return result;
+    }
+
+    function replaceModelSubtree(root, path, replacement) {
+      if (!path) return replacement;
+      let parent = root;
+      for (let index = 0; index < path.length - 1; index += 1) parent = parent[path[index] === "L" ? "left" : "right"];
+      parent[path.at(-1) === "L" ? "left" : "right"] = replacement;
+      return root;
+    }
+
+    function appendAvlRepairs(steps, startingRoot) {
+      let root = startingRoot;
+      refreshAvlHeights(root);
+      let violation = deepestAvlViolation(root);
+      if (!violation) {
+        steps.at(-1).text += " Every balance factor stays between -1 and 1, so no rotation is needed.";
+        return root;
+      }
+      while (violation) {
+        const { node, path, balance } = violation;
+        const child = balance > 1 ? node.left : node.right;
+        const doubleRotation = balance > 1 ? modelBalance(child) < 0 : modelBalance(child) > 0;
+        const caseName = balance > 1 ? (doubleRotation ? "left-right (LR)" : "left-left (LL)") : (doubleRotation ? "right-left (RL)" : "right-right (RR)");
+        steps.push({
+          title: `AVL violation at ${node.value}`,
+          text: `Node ${node.value} has left height ${modelHeight(node.left)} and right height ${modelHeight(node.right)}, so its balance factor is ${balance}. AVL allows only -1, 0, or 1. This is a ${caseName} case.`,
+          model: copySolutionModel(root, "avl"), focus: node.value, violation: true
+        });
+
+        if (doubleRotation) {
+          const childValue = child.value;
+          if (balance > 1) node.left = rotateLeftModel(node.left);
+          else node.right = rotateRightModel(node.right);
+          refreshAvlHeights(root);
+          steps.push({
+            title: `Rotate ${balance > 1 ? "left" : "right"} at ${childValue}`,
+            text: `First rotate the child ${childValue} ${balance > 1 ? "left" : "right"}. This straightens the ${caseName} bend for the second rotation.`,
+            model: copySolutionModel(root, "avl"), focus: childValue
+          });
+        }
+
+        const oldValue = node.value;
+        const rotated = balance > 1 ? rotateRightModel(node) : rotateLeftModel(node);
+        root = replaceModelSubtree(root, path, rotated);
+        refreshAvlHeights(root);
+        steps.push({
+          title: `Rotate ${balance > 1 ? "right" : "left"} at ${oldValue}`,
+          text: `Rotate ${balance > 1 ? "right" : "left"} at ${oldValue}. ${rotated.value} becomes the root of this subtree, restoring its AVL balance.`,
+          model: copySolutionModel(root, "avl"), focus: rotated.value
+        });
+        violation = deepestAvlViolation(root);
+      }
+      return root;
+    }
+
+    function appendAvlInsertion(steps, previous, value) {
+      const route = insertionRoute(previous, value);
+      const raw = insertModel(copySolutionModel(previous, "avl"), value);
+      refreshAvlHeights(raw);
+      steps.push({ title: `Insert ${value} before rebalancing`, text: `${route} Place ${value} in that empty spot, then check balance factors from this leaf upward.`, model: copySolutionModel(raw, "avl"), focus: value });
+      return appendAvlRepairs(steps, raw);
+    }
+
+    function deletionExplanation(root, value) {
+      let node = root;
+      while (node && node.value !== value) node = value < node.value ? node.left : node.right;
+      if (node && node.left && node.right) return `Node ${value} has two children. Replace it with its in-order successor ${minModelNode(node.right).value}, then remove that successor from its old spot.`;
+      return `Remove ${value} and reconnect its remaining child, if it has one.`;
     }
 
     function makeSolutionSteps() {
       const task = currentTask();
       const name = { bst: "BST", avl: "AVL", rb: "Red-Black", b234: "2-3-4" }[treeMode];
-      if (taskMode === "build") {
-        const steps = [{ title: "Start with an empty tree", text: `Insert the numbers in badge order to build the ${name} tree.`, model: null, focus: null }];
-        task.order.forEach((value, index) => {
-          steps.push({
-            title: `Insert ${value}${index === task.order.length - 1 ? " · final tree" : ""}`,
-            text: insertionExplanation(value, task),
-            model: solutionModel(task.order.slice(0, index + 1)),
-            focus: value
-          });
-        });
-        return steps;
-      }
+      const steps = taskMode === "build" ? [
+        { title: "Start with an empty tree", text: `Insert the numbers in badge order to build the ${name} tree.`, model: null, focus: null }
+      ] : [
+        { title: "Starting tree", text: "This is the tree already on the board. Press Next Step to see the required change.", model: solutionModel(task.premade), focus: null }
+      ];
 
-      const steps = [{
-        title: "Starting tree",
-        text: "This is the tree already on the board. Press Next Step to see the required change.",
-        model: solutionModel(task.premade),
-        focus: null
-      }];
       if (task.remove) {
         const value = task.remove[0];
-        const rotation = treeMode === "avl" && task.rotation ? ` Restore balance with the ${task.rotation} case.` : "";
-        steps.push({
-          title: `Remove ${value} · final tree`,
-          text: `Remove ${value}. If it has two children, replace it with its in-order successor.${rotation}`,
-          model: expectedTreeModel(),
-          focus: null
+        const startingTree = solutionModel(task.premade);
+        const raw = deleteModel(copySolutionModel(startingTree, treeMode), value);
+        if (treeMode === "avl") {
+          refreshAvlHeights(raw);
+          steps.push({ title: `Remove ${value} before rebalancing`, text: `${deletionExplanation(startingTree, value)} Now check each ancestor for an AVL imbalance.`, model: copySolutionModel(raw, "avl"), focus: null });
+          appendAvlRepairs(steps, raw);
+        } else {
+          steps.push({ title: `Remove ${value}`, text: `${deletionExplanation(startingTree, value)} The BST ordering rule still holds.`, model: raw, focus: null });
+        }
+      } else if (treeMode === "rb") {
+        buildRbModel(task.order, (event) => {
+          if (taskMode === "build" || event.value === task.add[0]) steps.push(event);
         });
+      } else if (treeMode === "b234") {
+        build234Model(task.order, (event) => {
+          if (taskMode === "build" || event.value === task.add[0]) steps.push(event);
+        });
+      } else if (treeMode === "avl") {
+        let model = taskMode === "build" ? null : solutionModel(task.premade);
+        const additions = taskMode === "build" ? task.order : task.add;
+        additions.forEach((value) => { model = appendAvlInsertion(steps, model, value); });
       } else {
-        const value = task.add[0];
-        steps.push({
-          title: `Insert ${value} · final tree`,
-          text: insertionExplanation(value, task),
-          model: solutionModel(task.order),
-          focus: value
+        let model = taskMode === "build" ? null : solutionModel(task.premade);
+        const additions = taskMode === "build" ? task.order : task.add;
+        additions.forEach((value) => {
+          const route = insertionRoute(model, value);
+          model = insertModel(model, value);
+          steps.push({ title: `Insert ${value}`, text: `${route} Place ${value} in the empty spot. This keeps every smaller value left and larger value right.`, model: copySolutionModel(model, "bst"), focus: value });
         });
       }
+
+      steps.at(-1).title += " · final tree";
       return steps;
     }
 
@@ -2089,7 +2222,7 @@
       return element;
     }
 
-    function renderSolutionTree(model, focus) {
+    function renderSolutionTree(model, focus, violation = false) {
       solutionCanvas.replaceChildren();
       const is234 = treeMode === "b234";
       const spacing = is234 ? 174 : 86;
@@ -2148,9 +2281,9 @@
               y: y - 25,
               width: cellWidth,
               height: 50,
-              fill: key === focus ? "#f9da86" : "#fffdf7",
-              stroke: "#226a8c",
-              "stroke-width": 2
+              fill: key === focus ? (violation ? "#f5b8b2" : "#f9da86") : "#fffdf7",
+              stroke: key === focus && violation ? "#c4463f" : "#226a8c",
+              "stroke-width": key === focus && violation ? 3 : 2
             });
             svg.appendChild(cell);
             const label = svgElement("text", { x: x - boxWidth / 2 + index * cellWidth + cellWidth / 2, y: y + 6, "text-anchor": "middle", fill: "#1e2a2f", "font-size": 19, "font-weight": 800 });
@@ -2159,7 +2292,7 @@
           });
         } else {
           const fill = treeMode === "rb" ? (node.color === "red" ? "#c4463f" : "#1e2a2f") : "#226a8c";
-          svg.appendChild(svgElement("circle", { cx: x, cy: y, r: 26, fill, stroke: node.value === focus ? "#d9972b" : "#fffdf7", "stroke-width": node.value === focus ? 5 : 2 }));
+          svg.appendChild(svgElement("circle", { cx: x, cy: y, r: 26, fill, stroke: node.value === focus ? (violation ? "#f5b654" : "#d9972b") : "#fffdf7", "stroke-width": node.value === focus ? 5 : 2 }));
           const label = svgElement("text", { x, y: y + 6, "text-anchor": "middle", fill: "#ffffff", "font-size": 19, "font-weight": 800 });
           label.textContent = node.value;
           svg.appendChild(label);
@@ -2178,7 +2311,7 @@
       solutionPrevBtn.disabled = solutionStepIndex === 0;
       solutionNextBtn.disabled = solutionStepIndex === solutionSteps.length - 1;
       solutionCanvas.setAttribute("aria-label", `${step.title}. ${step.text}`);
-      renderSolutionTree(step.model, step.focus);
+      renderSolutionTree(step.model, step.focus, step.violation);
     }
 
     function openSolution() {
