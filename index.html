@@ -259,8 +259,16 @@
 
     .solution-canvas svg {
       display: block;
-      min-width: 100%;
-      height: auto;
+      width: 100%;
+      height: 100%;
+    }
+
+    @media (max-width: 700px) {
+      .solution-canvas svg {
+        width: auto;
+        height: auto;
+        min-width: 700px;
+      }
     }
 
     .solution-actions .tool {
