@@ -179,6 +179,100 @@
       color: var(--ink);
     }
 
+    .tool.solution-trigger {
+      grid-column: 1 / -1;
+      background: var(--blue);
+    }
+
+    .solution-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      background: rgba(21, 37, 43, .68);
+    }
+
+    .solution-overlay[hidden] {
+      display: none;
+    }
+
+    .solution-dialog {
+      width: min(940px, 100%);
+      max-height: min(92vh, 850px);
+      display: grid;
+      grid-template-rows: auto auto minmax(220px, 1fr) auto;
+      gap: 14px;
+      padding: clamp(16px, 3vw, 26px);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 26px 70px rgba(10, 22, 26, .35);
+    }
+
+    .solution-header,
+    .solution-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .solution-header h2 {
+      color: var(--ink);
+      font-size: 22px;
+      text-transform: none;
+    }
+
+    .solution-close {
+      min-width: 38px;
+      min-height: 38px;
+      border-radius: 8px;
+      background: #e9e2d4;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .solution-caption {
+      display: grid;
+      gap: 5px;
+      line-height: 1.4;
+    }
+
+    .solution-caption strong {
+      font-size: 17px;
+    }
+
+    .solution-caption p,
+    .solution-count {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .solution-canvas {
+      min-height: 260px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f7faf7;
+    }
+
+    .solution-canvas svg {
+      display: block;
+      min-width: 100%;
+      height: auto;
+    }
+
+    .solution-actions .tool {
+      min-width: 112px;
+      padding: 0 14px;
+    }
+
+    .solution-actions .tool:disabled {
+      cursor: default;
+      opacity: .45;
+    }
+
     .hint-panel {
       display: none;
       gap: 7px;
@@ -621,6 +715,7 @@
         <button class="tool secondary" id="continueBtn" hidden>Continue</button>
         <button class="tool secondary" id="addSlotBtn">Add Slot</button>
         <button class="tool secondary" id="resetBtn">Reset</button>
+        <button class="tool solution-trigger" id="solutionBtn">Show Solution</button>
       </div>
 
       <section class="hint-panel" id="hintPanel" aria-live="polite">
@@ -664,6 +759,25 @@
   </main>
 
   <div class="toast" id="toast"></div>
+
+  <div class="solution-overlay" id="solutionOverlay" hidden>
+    <section class="solution-dialog" role="dialog" aria-modal="true" aria-labelledby="solutionTitle">
+      <div class="solution-header">
+        <h2 id="solutionTitle">Step-by-step solution</h2>
+        <button class="solution-close" id="solutionCloseBtn" aria-label="Close solution">&times;</button>
+      </div>
+      <div class="solution-caption" aria-live="polite">
+        <strong id="solutionStepTitle"></strong>
+        <p id="solutionStepText"></p>
+      </div>
+      <div class="solution-canvas" id="solutionCanvas" role="img" aria-label="Tree at this solution step"></div>
+      <div class="solution-actions">
+        <button class="tool secondary" id="solutionPrevBtn">Previous</button>
+        <span class="solution-count" id="solutionCount"></span>
+        <button class="tool" id="solutionNextBtn">Next Step</button>
+      </div>
+    </section>
+  </div>
 
   <script>
     const challengeCache = {
@@ -709,6 +823,15 @@
     const continueBtn = document.querySelector("#continueBtn");
     const addSlotBtn = document.querySelector("#addSlotBtn");
     const resetBtn = document.querySelector("#resetBtn");
+    const solutionBtn = document.querySelector("#solutionBtn");
+    const solutionOverlay = document.querySelector("#solutionOverlay");
+    const solutionCloseBtn = document.querySelector("#solutionCloseBtn");
+    const solutionStepTitle = document.querySelector("#solutionStepTitle");
+    const solutionStepText = document.querySelector("#solutionStepText");
+    const solutionCanvas = document.querySelector("#solutionCanvas");
+    const solutionCount = document.querySelector("#solutionCount");
+    const solutionPrevBtn = document.querySelector("#solutionPrevBtn");
+    const solutionNextBtn = document.querySelector("#solutionNextBtn");
     const treeModeMenu = document.querySelector("#treeModeMenu");
     const taskModeMenu = document.querySelector("#taskModeMenu");
     const difficultyMenu = document.querySelector("#difficultyMenu");
@@ -725,6 +848,8 @@
     let initializing = false;
     let hintStage = 0;
     let solved = false;
+    let solutionSteps = [];
+    let solutionStepIndex = 0;
 
     const difficultyRanges = {
       easy: { build: [5, 7], alter: [5, 6] },
@@ -1248,6 +1373,8 @@
 
     function initLevel() {
       const level = currentTask();
+      solutionOverlay.hidden = true;
+      solutionSteps = [];
       document.body.classList.toggle("b234-mode", treeMode === "b234");
       board.querySelectorAll(".slot,.node,.b-node-group").forEach((el) => el.remove());
       board.style.width = "1000px";
@@ -1888,6 +2015,178 @@
       return expected;
     }
 
+    function solutionModel(values) {
+      if (treeMode === "avl") return buildAvlModel(values);
+      if (treeMode === "rb") return buildRbModel(values);
+      if (treeMode === "b234") return build234Model(values);
+      return buildTreeModel(values);
+    }
+
+    function insertionExplanation(value, task) {
+      if (treeMode === "avl") {
+        const rotation = taskMode === "alter" && task.rotation ? ` This is the ${task.rotation} case.` : "";
+        return `Insert ${value} by BST order, then rotate wherever a node becomes unbalanced.${rotation}`;
+      }
+      if (treeMode === "rb") return `Insert ${value} as red, then repair red-red conflicts with recoloring or rotations. The root ends black.`;
+      if (treeMode === "b234") return `Before descending, split any full 4-node and promote its middle key. Insert ${value} into the sorted leaf.`;
+      return `Compare ${value} from the root: go left for smaller values and right for larger values until an empty spot is found.`;
+    }
+
+    function makeSolutionSteps() {
+      const task = currentTask();
+      const name = { bst: "BST", avl: "AVL", rb: "Red-Black", b234: "2-3-4" }[treeMode];
+      if (taskMode === "build") {
+        const steps = [{ title: "Start with an empty tree", text: `Insert the numbers in badge order to build the ${name} tree.`, model: null, focus: null }];
+        task.order.forEach((value, index) => {
+          steps.push({
+            title: `Insert ${value}${index === task.order.length - 1 ? " · final tree" : ""}`,
+            text: insertionExplanation(value, task),
+            model: solutionModel(task.order.slice(0, index + 1)),
+            focus: value
+          });
+        });
+        return steps;
+      }
+
+      const steps = [{
+        title: "Starting tree",
+        text: "This is the tree already on the board. Press Next Step to see the required change.",
+        model: solutionModel(task.premade),
+        focus: null
+      }];
+      if (task.remove) {
+        const value = task.remove[0];
+        const rotation = treeMode === "avl" && task.rotation ? ` Restore balance with the ${task.rotation} case.` : "";
+        steps.push({
+          title: `Remove ${value} · final tree`,
+          text: `Remove ${value}. If it has two children, replace it with its in-order successor.${rotation}`,
+          model: expectedTreeModel(),
+          focus: null
+        });
+      } else {
+        const value = task.add[0];
+        steps.push({
+          title: `Insert ${value} · final tree`,
+          text: insertionExplanation(value, task),
+          model: solutionModel(task.order),
+          focus: value
+        });
+      }
+      return steps;
+    }
+
+    function svgElement(tag, attributes = {}) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
+      return element;
+    }
+
+    function renderSolutionTree(model, focus) {
+      solutionCanvas.replaceChildren();
+      const is234 = treeMode === "b234";
+      const spacing = is234 ? 174 : 86;
+      const nodes = [];
+      const edges = [];
+      let leafCount = 0;
+      let deepest = 0;
+
+      function visit(node, depth) {
+        if (!node) return null;
+        deepest = Math.max(deepest, depth);
+        const children = is234 ? node.children : [node.left, node.right].filter(Boolean);
+        const childItems = children.map((child) => visit(child, depth + 1));
+        const item = {
+          node,
+          x: childItems.length ? (childItems[0].x + childItems[childItems.length - 1].x) / 2 : leafCount++ * spacing,
+          y: 72 + depth * 112
+        };
+        nodes.push(item);
+        childItems.forEach((child) => edges.push([item, child]));
+        return item;
+      }
+
+      if (model) visit(model, 0);
+      const span = Math.max(0, leafCount - 1) * spacing;
+      const width = Math.max(540, span + (is234 ? 190 : 120));
+      const height = Math.max(290, 142 + deepest * 112);
+      const shift = (width - span) / 2;
+      const svg = svgElement("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "presentation" });
+
+      if (!model) {
+        const empty = svgElement("text", { x: width / 2, y: height / 2, "text-anchor": "middle", fill: "#647276", "font-size": 20, "font-weight": 700 });
+        empty.textContent = "Empty tree";
+        svg.appendChild(empty);
+      }
+
+      edges.forEach(([parent, child]) => {
+        svg.appendChild(svgElement("line", {
+          x1: parent.x + shift,
+          y1: parent.y + 26,
+          x2: child.x + shift,
+          y2: child.y - 26,
+          stroke: "#91a4a7",
+          "stroke-width": 3
+        }));
+      });
+
+      nodes.forEach(({ node, x, y }) => {
+        x += shift;
+        if (is234) {
+          const cellWidth = 52;
+          const boxWidth = node.keys.length * cellWidth;
+          node.keys.forEach((key, index) => {
+            const cell = svgElement("rect", {
+              x: x - boxWidth / 2 + index * cellWidth,
+              y: y - 25,
+              width: cellWidth,
+              height: 50,
+              fill: key === focus ? "#f9da86" : "#fffdf7",
+              stroke: "#226a8c",
+              "stroke-width": 2
+            });
+            svg.appendChild(cell);
+            const label = svgElement("text", { x: x - boxWidth / 2 + index * cellWidth + cellWidth / 2, y: y + 6, "text-anchor": "middle", fill: "#1e2a2f", "font-size": 19, "font-weight": 800 });
+            label.textContent = key;
+            svg.appendChild(label);
+          });
+        } else {
+          const fill = treeMode === "rb" ? (node.color === "red" ? "#c4463f" : "#1e2a2f") : "#226a8c";
+          svg.appendChild(svgElement("circle", { cx: x, cy: y, r: 26, fill, stroke: node.value === focus ? "#d9972b" : "#fffdf7", "stroke-width": node.value === focus ? 5 : 2 }));
+          const label = svgElement("text", { x, y: y + 6, "text-anchor": "middle", fill: "#ffffff", "font-size": 19, "font-weight": 800 });
+          label.textContent = node.value;
+          svg.appendChild(label);
+        }
+      });
+      solutionCanvas.appendChild(svg);
+      solutionCanvas.scrollLeft = Math.max(0, (width - solutionCanvas.clientWidth) / 2);
+      solutionCanvas.scrollTop = 0;
+    }
+
+    function showSolutionStep() {
+      const step = solutionSteps[solutionStepIndex];
+      solutionStepTitle.textContent = step.title;
+      solutionStepText.textContent = step.text;
+      solutionCount.textContent = `Step ${solutionStepIndex + 1} of ${solutionSteps.length}`;
+      solutionPrevBtn.disabled = solutionStepIndex === 0;
+      solutionNextBtn.disabled = solutionStepIndex === solutionSteps.length - 1;
+      solutionCanvas.setAttribute("aria-label", `${step.title}. ${step.text}`);
+      renderSolutionTree(step.model, step.focus);
+    }
+
+    function openSolution() {
+      solutionSteps = makeSolutionSteps();
+      solutionStepIndex = 0;
+      solutionOverlay.hidden = false;
+      showSolutionStep();
+      solutionNextBtn.focus();
+    }
+
+    function closeSolution() {
+      solutionOverlay.hidden = true;
+      solutionSteps = [];
+      solutionBtn.focus();
+    }
+
     function matchesExpectedTree(slotId, expected) {
       const slot = slotMap.get(slotId);
       const actualEmpty = !slot || slot.value === null;
@@ -2099,6 +2398,29 @@
     continueBtn.addEventListener("click", continueChallenge);
     addSlotBtn.addEventListener("click", addSlot);
     resetBtn.addEventListener("click", resetLevel);
+    solutionBtn.addEventListener("click", openSolution);
+    solutionCloseBtn.addEventListener("click", closeSolution);
+    solutionPrevBtn.addEventListener("click", () => {
+      if (solutionStepIndex > 0) {
+        solutionStepIndex -= 1;
+        showSolutionStep();
+      }
+    });
+    solutionNextBtn.addEventListener("click", () => {
+      if (solutionStepIndex < solutionSteps.length - 1) {
+        solutionStepIndex += 1;
+        showSolutionStep();
+      }
+    });
+    solutionOverlay.addEventListener("click", (event) => {
+      if (event.target === solutionOverlay) closeSolution();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (solutionOverlay.hidden) return;
+      if (event.key === "Escape") closeSolution();
+      if (event.key === "ArrowRight") solutionNextBtn.click();
+      if (event.key === "ArrowLeft") solutionPrevBtn.click();
+    });
     treeModeMenu.addEventListener("click", (event) => {
       const button = event.target.closest("[data-tree-mode]");
       if (!button) return;
