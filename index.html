@@ -1293,6 +1293,9 @@
       updateOrderHighlights();
       drawLinks();
       updateSlots();
+      if (treeMode === "b234") {
+        boardWrap.scrollLeft = Math.max(0, bNodeMap.get("root").x - boardWrap.clientWidth / 2);
+      }
     }
 
     function createSlot(pos) {
