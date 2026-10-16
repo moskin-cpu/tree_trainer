@@ -2228,17 +2228,26 @@
       const spacing = is234 ? 174 : 86;
       const nodes = [];
       const edges = [];
-      let leafCount = 0;
+      let horizontalPosition = 0;
       let deepest = 0;
 
       function visit(node, depth) {
         if (!node) return null;
         deepest = Math.max(deepest, depth);
-        const children = is234 ? node.children : [node.left, node.right].filter(Boolean);
-        const childItems = children.map((child) => visit(child, depth + 1));
+        let childItems;
+        let x;
+        if (is234) {
+          childItems = node.children.map((child) => visit(child, depth + 1));
+          x = childItems.length ? (childItems[0].x + childItems[childItems.length - 1].x) / 2 : horizontalPosition++ * spacing;
+        } else {
+          const left = visit(node.left, depth + 1);
+          x = horizontalPosition++ * spacing;
+          const right = visit(node.right, depth + 1);
+          childItems = [left, right].filter(Boolean);
+        }
         const item = {
           node,
-          x: childItems.length ? (childItems[0].x + childItems[childItems.length - 1].x) / 2 : leafCount++ * spacing,
+          x,
           y: 72 + depth * 112
         };
         nodes.push(item);
@@ -2247,7 +2256,7 @@
       }
 
       if (model) visit(model, 0);
-      const span = Math.max(0, leafCount - 1) * spacing;
+      const span = Math.max(0, horizontalPosition - 1) * spacing;
       const width = Math.max(540, span + (is234 ? 190 : 120));
       const height = Math.max(290, 142 + deepest * 112);
       const shift = (width - span) / 2;
@@ -2260,11 +2269,14 @@
       }
 
       edges.forEach(([parent, child]) => {
+        const dx = child.x - parent.x;
+        const dy = child.y - parent.y;
+        const length = Math.hypot(dx, dy);
         svg.appendChild(svgElement("line", {
-          x1: parent.x + shift,
-          y1: parent.y + 26,
-          x2: child.x + shift,
-          y2: child.y - 26,
+          x1: parent.x + shift + (is234 ? 0 : 26 * dx / length),
+          y1: parent.y + (is234 ? 26 : 26 * dy / length),
+          x2: child.x + shift - (is234 ? 0 : 26 * dx / length),
+          y2: child.y - (is234 ? 26 : 26 * dy / length),
           stroke: "#91a4a7",
           "stroke-width": 3
         }));
